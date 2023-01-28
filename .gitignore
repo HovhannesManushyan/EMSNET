@@ -1,0 +1,16 @@
+# Local files
+data/
+
+# Compiled Python bytecode
+*.py[cod]
+
+# Log files
+*.log
+
+# Env files
+*.env
+
+# JetBrains IDE
+.idea/
+
+.ipynb_checkpoints
