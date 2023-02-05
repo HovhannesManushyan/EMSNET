@@ -49,11 +49,9 @@ class DataLoader:
     def __getitem__(self, index: int):
         image_path = self.images[index]
         image_id = image_path.split('\\')[-1].split('.')[0]
-        label = self.labels[self.labels['ImageID'] == image_id]['Disease_Risk'].values[0]
+        label = self.labels[self.labels['ID'] == int(image_id)]['Disease_Risk'].values[0]
 
         image = read_image(image_path)
         resized_image = self.resizer(image)
 
         return resized_image, label
-
-
