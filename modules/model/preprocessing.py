@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 from torchvision.io import read_image
 from torchvision.transforms import Resize
+import torchvision.transforms as T
 
 CURRENT_PATH = Path(__file__).parent
 DATA_PATH = CURRENT_PATH.parent.parent / 'data'
@@ -26,10 +27,12 @@ class DataLoader:
     def __init__(
         self,
         image_size = (720,720),
-        split = 'Train'
+        split = 'Train',
+        augment = False
         ) -> None:
         self.resizer = Resize(image_size)
         self.split=split
+        self.augment = augment
 
         if self.split=='Train':
             self.images = TRAINING_IMAGES
@@ -42,6 +45,15 @@ class DataLoader:
             self.labels = EVALUATION_LABELS
         else:
             raise ValueError('Split must be one of Train, Test or Evaluation')
+        
+        #create pytorch transforms augmentation pipeline consisting of rotation, flipping, and altering in brightness, saturation, contrast and hue
+        if augment:
+            self.augmenter = T.Compose([
+                T.RandomRotation(20),
+                T.RandomHorizontalFlip(),
+                T.RandomVerticalFlip(),
+                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2)
+            ])
 
     def __len__(self) -> int:
         return len(self.images)
@@ -53,5 +65,8 @@ class DataLoader:
 
         image = read_image(image_path)
         resized_image = self.resizer(image)
+
+        if self.augment:
+            resized_image = self.augmenter(resized_image)
 
         return resized_image, label
