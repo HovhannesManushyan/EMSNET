@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import pandas as pd
+import torchvision.transforms as T
 from torchvision.io import read_image
 from torchvision.transforms import Resize
-import torchvision.transforms as T
 
 CURRENT_PATH = Path(__file__).parent
 DATA_PATH = CURRENT_PATH.parent.parent / 'data'
@@ -45,7 +45,7 @@ class DataLoader:
             self.labels = EVALUATION_LABELS
         else:
             raise ValueError('Split must be one of Train, Test or Evaluation')
-        
+        #TODO add padding,cropping and centering
         #create pytorch transforms augmentation pipeline consisting of rotation, flipping, and altering in brightness, saturation, contrast and hue
         if augment:
             self.augmenter = T.Compose([
