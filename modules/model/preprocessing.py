@@ -1,9 +1,13 @@
 from pathlib import Path
 
 import pandas as pd
+import torch
 import torchvision.transforms as T
 from torchvision.io import read_image
 from torchvision.transforms import Resize
+from torch.utils.data import Dataset
+from imblearn.over_sampling import RandomOverSampler
+import numpy as np
 
 CURRENT_PATH = Path(__file__).parent
 DATA_PATH = CURRENT_PATH.parent.parent / 'data'
@@ -21,16 +25,17 @@ TRAINING_IMAGES = [str(image) for image in (TRAINING_PATH / 'Training').glob('*.
 TEST_IMAGES = [str(image) for image in (TEST_PATH / 'Test').glob('*.png')]
 EVALUATION_IMAGES = [str(image) for image in (EVALUATION_PATH / 'Evaluation').glob('*.png')]
 
-class DataLoader:
+class DataLoader(Dataset):
     """Dataloader class to load the data and the labels from the training, test and evaluation sets
     """
     def __init__(
         self,
         image_size = (720,720),
         split = 'Train',
-        augment = False
+        augment = False,
+        upsample = None
         ) -> None:
-        self.resizer = Resize(image_size)
+        self.resizer = Resize(image_size,antialias = False)
         self.split=split
         self.augment = augment
 
@@ -45,7 +50,19 @@ class DataLoader:
             self.labels = EVALUATION_LABELS
         else:
             raise ValueError('Split must be one of Train, Test or Evaluation')
-        #TODO add padding,cropping and centering
+        
+        if upsample:
+            #upsample is the ratio of the minority class to the majority class after resampling
+            sampler = RandomOverSampler(sampling_strategy=upsample,random_state=42,)
+            resampled_ids,resampled_labels = sampler.fit_resample(np.array(self.labels['ID']).reshape(-1,1),self.labels['Disease_Risk'])
+            # replicate the self.images list to match the length of the resampled labels using the resampled_ids
+            resampled_ids = np.array(resampled_ids).tolist()
+            self.images = [self.images[id-1] for id in resampled_ids]
+            # create a new dataframe with the resampled labels
+            self.labels = pd.DataFrame({'ID':resampled_ids.reshape(-1),'Disease_Risk':resampled_labels})
+
+
+
         #create pytorch transforms augmentation pipeline consisting of rotation, flipping, and altering in brightness, saturation, contrast and hue
         if augment:
             self.augmenter = T.Compose([
@@ -69,4 +86,13 @@ class DataLoader:
         if self.augment:
             resized_image = self.augmenter(resized_image)
 
+        #change the resized image tensor to float32
+        resized_image = resized_image.float()
+
         return resized_image, label
+
+
+if __name__=='__main__':
+    loader = DataLoader((64,64),split='Train',augment=True,upsample = 0.5)
+    print(len(loader))
+    print(loader[5])
