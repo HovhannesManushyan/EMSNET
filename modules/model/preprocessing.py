@@ -1,13 +1,14 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import torch
 import torchvision.transforms as T
+from imblearn.over_sampling import RandomOverSampler
+from torch.utils.data import Dataset
 from torchvision.io import read_image
 from torchvision.transforms import Resize
-from torch.utils.data import Dataset
-from imblearn.over_sampling import RandomOverSampler
-import numpy as np
+import albumentations as A
 
 CURRENT_PATH = Path(__file__).parent
 DATA_PATH = CURRENT_PATH.parent.parent / 'data'
@@ -25,6 +26,32 @@ TRAINING_IMAGES = [str(image) for image in (TRAINING_PATH / 'Training').glob('*.
 TEST_IMAGES = [str(image) for image in (TEST_PATH / 'Test').glob('*.png')]
 EVALUATION_IMAGES = [str(image) for image in (EVALUATION_PATH / 'Evaluation').glob('*.png')]
 
+def remove_borders(tensor):
+    """
+    Removes black edges from a PyTorch tensor.
+
+    Args:
+        tensor (torch.Tensor): A PyTorch tensor of shape (channel, height, width).
+
+    Returns:
+        torch.Tensor: A tensor with black edges removed.
+    """
+    # Compute the sum of the pixel values in each row and column
+    row_sums = torch.sum(tensor, dim=(0, 2))
+    col_sums = torch.sum(tensor, dim=(0, 1))
+
+    # Find the first and last non-zero row and column indices
+    first_row = torch.nonzero(row_sums).min().item()
+    last_row = torch.nonzero(row_sums).max().item()
+    first_col = torch.nonzero(col_sums).min().item()
+    last_col = torch.nonzero(col_sums).max().item()
+
+    # Create a new tensor with the new size
+    new_tensor = tensor[:, first_row:last_row+1, first_col:last_col+1]
+
+    return new_tensor
+    
+
 class DataLoader(Dataset):
     """Dataloader class to load the data and the labels from the training, test and evaluation sets
     """
@@ -33,11 +60,13 @@ class DataLoader(Dataset):
         image_size = (720,720),
         split = 'Train',
         augment = False,
-        upsample = None
+        upsample = None,
+        edge_removal = False
         ) -> None:
         self.resizer = Resize(image_size,antialias = False)
         self.split=split
         self.augment = augment
+        self.edge_removal = edge_removal
 
         if self.split=='Train':
             self.images = TRAINING_IMAGES
@@ -52,6 +81,7 @@ class DataLoader(Dataset):
             raise ValueError('Split must be one of Train, Test or Evaluation')
         
         if upsample:
+            #TODO fix upsampling
             #upsample is the ratio of the minority class to the majority class after resampling
             sampler = RandomOverSampler(sampling_strategy=upsample,random_state=42,)
             resampled_ids,resampled_labels = sampler.fit_resample(np.array(self.labels['ID']).reshape(-1,1),self.labels['Disease_Risk'])
@@ -65,27 +95,55 @@ class DataLoader(Dataset):
 
         #create pytorch transforms augmentation pipeline consisting of rotation, flipping, and altering in brightness, saturation, contrast and hue
         if augment:
-            self.augmenter = T.Compose([
-                T.RandomRotation(20),
-                T.RandomHorizontalFlip(),
-                T.RandomVerticalFlip(),
-                T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2)
-            ])
+            if augment=='classic':
+                self.augmenter = T.Compose([
+                    T.RandomRotation(30),
+                    T.RandomHorizontalFlip(p = 0.1),
+                    T.RandomVerticalFlip(p = 0.1),
+                    T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1)
+                ])
+            elif augment=='winner':
+                self.augmenter = A.Compose([
+                    A.HorizontalFlip(p=0.5),
+                    A.VerticalFlip(p=0.5),
+                    A.RandomBrightnessContrast(p=0.3,brightness_limit = (-0.2,0.2),contrast_limit = (-0.2,0.2)),
+                    A.MedianBlur(p=0.3,always_apply=False,blur_limit=5),
+                    A.IAAAdditiveGaussianNoise(p=0.5,scale=(0,0.15*255)),
+                    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=10,val_shift_limit=10,p=0.3),
+                    A.Cutout(p=0.5,max_h_size=20,max_w_size=20,num_holes=5)
+                ])
+            else:
+                raise ValueError('Senc ban chka ara')
+        
 
     def __len__(self) -> int:
         return len(self.images)
 
     def __getitem__(self, index: int):
+        # permute = [2, 1, 0]
         image_path = self.images[index]
         image_id = image_path.split('\\')[-1].split('.')[0]
         label = self.labels[self.labels['ID'] == int(image_id)]['Disease_Risk'].values[0]
 
         image = read_image(image_path)
+        # image = image[permute]
+        #convert the white background to black and remove the black edges of the image
+        if self.edge_removal:
+            image = remove_borders(image)
+            # image = image[:,image.sum(axis=0)!=0]
+            # image = image[image.sum(axis=1)!=0,:]
+
         resized_image = self.resizer(image)
 
         if self.augment:
-            resized_image = self.augmenter(resized_image)
-
+            if self.augment == 'classic':
+                resized_image = self.augmenter(resized_image)
+            elif self.augment == 'winner':
+                array_image = resized_image.permute(1,2,0).numpy()
+                augmented_image = self.augmenter(image=array_image)
+                resized_image = torch.from_numpy(augmented_image['image']).permute(2,0,1)
+            else:
+                raise ValueError('Senc ban chka ara')
         #change the resized image tensor to float32
         resized_image = resized_image.float()
 
@@ -93,6 +151,6 @@ class DataLoader(Dataset):
 
 
 if __name__=='__main__':
-    loader = DataLoader((64,64),split='Train',augment=True,upsample = 0.5)
+    loader = DataLoader((64,64),split='Train',augment=True,edge_removal=True)
     print(len(loader))
     print(loader[5])
