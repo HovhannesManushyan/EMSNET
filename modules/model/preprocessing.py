@@ -26,6 +26,8 @@ TRAINING_IMAGES = [str(image) for image in (TRAINING_PATH / 'Training').glob('*.
 TEST_IMAGES = [str(image) for image in (TEST_PATH / 'Test').glob('*.png')]
 EVALUATION_IMAGES = [str(image) for image in (EVALUATION_PATH / 'Evaluation').glob('*.png')]
 
+ODIR_IMAGES = [str(image) for image in (DATA_PATH / 'preprocessed_images').glob('*.jpg')]
+
 def remove_borders(tensor):
     """
     Removes black edges from a PyTorch tensor.
@@ -61,12 +63,14 @@ class DataLoader(Dataset):
         split = 'Train',
         augment = False,
         upsample = None,
-        edge_removal = False
+        edge_removal = False,
+        load_odir = False #only used for GAN pretraining
         ) -> None:
         self.resizer = Resize(image_size,antialias = False)
         self.split=split
         self.augment = augment
         self.edge_removal = edge_removal
+        self.load_odir = load_odir
 
         if self.split=='Train':
             self.images = TRAINING_IMAGES
@@ -79,6 +83,10 @@ class DataLoader(Dataset):
             self.labels = EVALUATION_LABELS
         else:
             raise ValueError('Split must be one of Train, Test or Evaluation')
+
+        if self.load_odir:
+            self.images.extend(ODIR_IMAGES)
+            self.labels = pd.DataFrame({'ID':list(range(1,len(self.images)+1)),'Disease_Risk':np.zeros(len(self.images))})
         
         if upsample:
             #TODO fix upsampling
@@ -123,8 +131,10 @@ class DataLoader(Dataset):
         # permute = [2, 1, 0]
         image_path = self.images[index]
         image_id = image_path.split('\\')[-1].split('.')[0]
-        label = self.labels[self.labels['ID'] == int(image_id)]['Disease_Risk'].values[0]
-
+        if not self.load_odir:
+            label = self.labels[self.labels['ID'] == int(image_id)]['Disease_Risk'].values[0]
+        else:
+            label = 0
         image = read_image(image_path)
         # image = image[permute]
         #convert the white background to black and remove the black edges of the image
