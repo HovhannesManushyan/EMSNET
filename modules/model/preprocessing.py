@@ -85,7 +85,7 @@ class DataLoader(Dataset):
             raise ValueError('Split must be one of Train, Test or Evaluation')
 
         if self.load_odir:
-            self.images.extend(ODIR_IMAGES)
+            self.images = ODIR_IMAGES
             self.labels = pd.DataFrame({'ID':list(range(1,len(self.images)+1)),'Disease_Risk':np.zeros(len(self.images))})
         
         if upsample:
