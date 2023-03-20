@@ -15,18 +15,19 @@ DATA_PATH = CURRENT_PATH.parent.parent / 'data'
 EVALUATION_PATH = DATA_PATH / 'Evaluation_Set'
 TRAINING_PATH = DATA_PATH / 'Training_Set'
 TEST_PATH = DATA_PATH / 'Test_Set'
+ODIR_PATH = DATA_PATH / 'preprocessed_images'
 
 # load the training labels csv file
-TRAINING_LABELS = pd.read_csv(TRAINING_PATH / 'RFMiD_Training_Labels.csv')
-TEST_LABELS = pd.read_csv(TEST_PATH / 'RFMiD_Testing_Labels.csv')
-EVALUATION_LABELS = pd.read_csv(EVALUATION_PATH / 'RFMiD_Validation_Labels.csv')
-
+try:
+    TRAINING_LABELS = pd.read_csv(TRAINING_PATH / 'RFMiD_Training_Labels.csv')
+    TEST_LABELS = pd.read_csv(TEST_PATH / 'RFMiD_Testing_Labels.csv')
+    EVALUATION_LABELS = pd.read_csv(EVALUATION_PATH / 'RFMiD_Validation_Labels.csv')
+except:
+    raise RuntimeError('Missing RFMiD data')
 # image paths for each set
 TRAINING_IMAGES = [str(image) for image in (TRAINING_PATH / 'Training').glob('*.png')]
 TEST_IMAGES = [str(image) for image in (TEST_PATH / 'Test').glob('*.png')]
 EVALUATION_IMAGES = [str(image) for image in (EVALUATION_PATH / 'Evaluation').glob('*.png')]
-
-ODIR_IMAGES = [str(image) for image in (DATA_PATH / 'preprocessed_images').glob('*.jpg')]
 
 def remove_borders(tensor):
     """
@@ -64,7 +65,7 @@ class DataLoader(Dataset):
         augment = False,
         upsample = None,
         edge_removal = False,
-        load_odir = False #only used for GAN pretraining
+        load_odir = False #only used for GAN pretraining. Loads only the ODIR dataset
         ) -> None:
         self.resizer = Resize(image_size,antialias = False)
         self.split=split
@@ -85,9 +86,26 @@ class DataLoader(Dataset):
             raise ValueError('Split must be one of Train, Test or Evaluation')
 
         if self.load_odir:
-            self.images = ODIR_IMAGES
-            self.labels = pd.DataFrame({'ID':list(range(1,len(self.images)+1)),'Disease_Risk':np.zeros(len(self.images))})
-        
+            df = pd.read_csv(DATA_PATH / 'full_df.csv')
+            df['Disease_Risk'] = df.apply(
+                lambda x: 1 if (x['Left-Diagnostic Keywords']!='normal fundus' or x['Right-Diagnostic Keywords']!='normal fundus') else 0, axis = 1
+                )
+            df_lefts = df[['Left-Fundus', 'Disease_Risk']]
+            df_lefts.columns = ['image', 'Disease_Risk']
+            df_rights = df[['Right-Fundus', 'Disease_Risk']]
+            df_rights.columns = ['image', 'Disease_Risk']
+            total_df = pd.concat([df_lefts, df_rights])
+            total_df['image'] = total_df['image'].apply(lambda x: str(ODIR_PATH / x))
+            total_df = pd.DataFrame(
+                {'ID':list(range(1,len(total_df)+1)),
+                'Disease_Risk':total_df['Disease_Risk'],
+                'image':total_df['image']}
+                )
+            existing_images = total_df['image'].apply(lambda x: Path(x).exists())
+            total_with_existing_images = total_df[existing_images]
+            self.labels = total_with_existing_images
+            self.images = total_with_existing_images['image'].tolist()
+
         if upsample:
             #TODO fix upsampling
             #upsample is the ratio of the minority class to the majority class after resampling
@@ -122,7 +140,7 @@ class DataLoader(Dataset):
                 ])
             else:
                 raise ValueError('Senc ban chka ara')
-        
+
 
     def __len__(self) -> int:
         return len(self.images)
