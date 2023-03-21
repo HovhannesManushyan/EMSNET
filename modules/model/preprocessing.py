@@ -1,14 +1,16 @@
 from pathlib import Path
 
+import albumentations as A
 import numpy as np
 import pandas as pd
+from tifffile import imread
 import torch
 import torchvision.transforms as T
 from imblearn.over_sampling import RandomOverSampler
 from torch.utils.data import Dataset
 from torchvision.io import read_image
-from torchvision.transforms import Resize
-import albumentations as A
+from torchvision.transforms import Resize, ToTensor
+from PIL import Image
 
 CURRENT_PATH = Path(__file__).parent
 DATA_PATH = CURRENT_PATH.parent.parent / 'data'
@@ -16,6 +18,7 @@ EVALUATION_PATH = DATA_PATH / 'Evaluation_Set'
 TRAINING_PATH = DATA_PATH / 'Training_Set'
 TEST_PATH = DATA_PATH / 'Test_Set'
 ODIR_PATH = DATA_PATH / 'preprocessed_images'
+MURED_PATH = DATA_PATH / 'Mured'
 
 # load the training labels csv file
 try:
@@ -28,6 +31,14 @@ except:
 TRAINING_IMAGES = [str(image) for image in (TRAINING_PATH / 'Training').glob('*.png')]
 TEST_IMAGES = [str(image) for image in (TEST_PATH / 'Test').glob('*.png')]
 EVALUATION_IMAGES = [str(image) for image in (EVALUATION_PATH / 'Evaluation').glob('*.png')]
+
+# write a function which finds the extension of a file given a path to that file which is missing the extension
+def find_extension(path):
+    available_extensions = ['.png', '.jpg', '.jpeg','.tif']
+    for extension in available_extensions:
+        if Path(path + extension).exists():
+            return path + extension
+    raise ValueError(f'image at {path} does not have a valid extension')
 
 def remove_borders(tensor):
     """
@@ -65,13 +76,15 @@ class DataLoader(Dataset):
         augment = False,
         upsample = None,
         edge_removal = False,
-        load_odir = False #only used for GAN pretraining. Loads only the ODIR dataset
+        load_odir = False, #only used for GAN pretraining. Loads only the ODIR dataset
+        load_mured = False
         ) -> None:
         self.resizer = Resize(image_size,antialias = False)
         self.split=split
         self.augment = augment
         self.edge_removal = edge_removal
         self.load_odir = load_odir
+        self.load_mured = load_mured
 
         if self.split=='Train':
             self.images = TRAINING_IMAGES
@@ -101,6 +114,24 @@ class DataLoader(Dataset):
                 'Disease_Risk':total_df['Disease_Risk'],
                 'image':total_df['image']}
                 )
+            existing_images = total_df['image'].apply(lambda x: Path(x).exists())
+            total_with_existing_images = total_df[existing_images]
+            self.labels = total_with_existing_images
+            self.images = total_with_existing_images['image'].tolist()
+
+        if self.load_mured:
+            df_train = pd.read_csv(MURED_PATH / 'train_data.csv')
+            df_eval = pd.read_csv(MURED_PATH / 'val_data.csv')
+            total_df = pd.concat([df_train, df_eval])
+            total_df['image'] = total_df['ID'].apply(lambda x: str(MURED_PATH / 'images' / x))
+            total_df['image'] = total_df['image'].apply(lambda x: find_extension(x))
+            total_df['Disease_Risk'] = total_df['NORMAL'].apply(lambda x: 0 if x==1 else 1)
+            total_df = pd.DataFrame(
+                {'ID':list(range(1,len(total_df)+1)),
+                'Disease_Risk':total_df['Disease_Risk'],
+                'image':total_df['image']}
+                )
+            self.df = total_df
             existing_images = total_df['image'].apply(lambda x: Path(x).exists())
             total_with_existing_images = total_df[existing_images]
             self.labels = total_with_existing_images
@@ -149,11 +180,22 @@ class DataLoader(Dataset):
         # permute = [2, 1, 0]
         image_path = self.images[index]
         image_id = image_path.split('\\')[-1].split('.')[0]
-        if not self.load_odir:
+        if (not self.load_odir) and (not self.load_mured):
             label = self.labels[self.labels['ID'] == int(image_id)]['Disease_Risk'].values[0]
+        elif self.load_odir or self.load_mured:
+            try:
+                label = self.labels[self.labels['image'].str.contains(image_id)]['Disease_Risk'].values[0]
+            except IndexError:
+                label = 0
+                print(f"Didn't find a label for image in index {image_id}. Defaulting to 0")
+
+        if not image_path.endswith('.tif'):
+            image = read_image(image_path)
         else:
-            label = 0
-        image = read_image(image_path)
+            image = Image.open(image_path)
+            # image = imread(image_path)
+            image = ToTensor()(image)
+            image*=255
         # image = image[permute]
         #convert the white background to black and remove the black edges of the image
         if self.edge_removal:
